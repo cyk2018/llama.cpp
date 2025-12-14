@@ -3662,36 +3662,87 @@ static void ggml_compute_forward_rms_norm_f32(
     memcpy(&eps, dst->op_params, sizeof(float));
 
     GGML_ASSERT(eps >= 0.0f);
-
+    
+    #ifdef __riscv_v
     // TODO: optimize
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
             for (int64_t i01 = ith; i01 < ne01; i01 += nth) {
                 const float * x = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
+                
+                size_t vl = __riscv_vsetvl_e32m4(ne00);
+                vfloat64m8_t sum_vec = __riscv_vfmv_v_f_f64m8(0.0, __riscv_vsetvl_e64m8(ne00));
 
-                ggml_float sum = 0.0;
-                for (int64_t i00 = 0; i00 < ne00; i00++) {
-                    sum += (ggml_float)(x[i00] * x[i00]);
+                int64_t i00 = 0;
+                for (; i00 <= ne00 - (int64_t)vl; i00 += (int64_t)vl) {
+                    vl = __riscv_vsetvl_e32m4(ne00 - i00);
+                    
+                    // 加载fp32数据
+                    vfloat32m4_t x_vec_f32 = __riscv_vle32_v_f32m4(&x[i00], vl);
+                    
+                    // 将fp32扩展为fp64 - 使用正确的类型转换
+                    vfloat64m8_t x_vec_f64 = __riscv_vfwcvt_f_f_v_f64m8(x_vec_f32, vl);
+                    
+                    // 在fp64精度下计算平方
+                    vfloat64m8_t square_vec = __riscv_vfmul_vv_f64m8(x_vec_f64, x_vec_f64, vl);
+                    
+                    // fp64精度累加
+                    sum_vec = __riscv_vfadd_vv_f64m8(sum_vec, square_vec, vl);
                 }
+
+                // 规约求和（fp64精度）
+                vfloat64m1_t vec_sum = __riscv_vfmv_v_f_f64m1(0.0f, vl);
+                vec_sum = __riscv_vfredusum_vs_f64m8_f64m1(sum_vec, vec_sum, vl);
+
+                double sum = __riscv_vfmv_f_s_f64m1_f64(vec_sum);
+
 
                 const float mean = sum/ne00;
 
                 float * y = (float *) ((char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3);
-
-                memcpy(y, x, ne00 * sizeof(float));
-                // for (int i00 = 0; i00 < ne00; i00++) {
-                //     y[i00] = x[i00];
-                // }
 
                 const float scale = 1.0f/sqrtf(mean + eps);
 
                 // if you hit this, likely you got an inf somewhere earlier
                 assert(scale > 0.0f);
 
+                memcpy(y, x, ne00 * sizeof(float));
+                // 这个函数里面已经利用了RVV
                 ggml_vec_scale_f32(ne00, y, scale);
             }
         }
     }
+    #else
+        for (int64_t i03 = 0; i03 < ne03; i03++) {
+            for (int64_t i02 = 0; i02 < ne02; i02++) {
+                for (int64_t i01 = ith; i01 < ne01; i01 += nth) {
+                    const float * x = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
+                    
+                    
+                    ggml_float sum = 0.0;
+                    for (int64_t i00 = 0; i00 < ne00; i00++) {
+                        sum += (ggml_float)(x[i00] * x[i00]);
+                    }
+
+                    const float mean = sum/ne00;
+
+                    float * y = (float *) ((char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3);
+
+                    memcpy(y, x, ne00 * sizeof(float));
+                    // for (int i00 = 0; i00 < ne00; i00++) {
+                    //     y[i00] = x[i00];
+                    // }
+
+                    const float scale = 1.0f/sqrtf(mean + eps);
+
+                    // if you hit this, likely you got an inf somewhere earlier
+                    assert(scale > 0.0f);
+
+                    ggml_vec_scale_f32(ne00, y, scale);
+                }
+            }
+        }
+    #endif
 }
 
 void ggml_compute_forward_rms_norm(
@@ -10319,3 +10370,4 @@ void ggml_compute_forward_opt_step_sgd(const ggml_compute_params * params, ggml_
             }
     }
 }
+

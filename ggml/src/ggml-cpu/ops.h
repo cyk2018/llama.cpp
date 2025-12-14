@@ -18,6 +18,12 @@
 #endif
 #endif
 
+#ifdef __riscv_v
+#include <riscv_vector.h>
+#else 
+#error "riscv v extension or v_intrinsic not enabled"
+#endif
+
 static const size_t CACHE_LINE_SIZE_F32 = CACHE_LINE_SIZE/sizeof(float);
 
 // Work buffer size for im2col operations in CONV2D
@@ -113,3 +119,4 @@ void ggml_compute_forward_opt_step_sgd(const struct ggml_compute_params * params
 #ifdef __cplusplus
 }
 #endif
+
