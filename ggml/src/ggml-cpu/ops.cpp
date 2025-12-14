@@ -3671,30 +3671,30 @@ static void ggml_compute_forward_rms_norm_f32(
                 const float * x = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
                 
                 size_t vl = __riscv_vsetvl_e32m4(ne00);
-                vfloat64m8_t sum_vec = __riscv_vfmv_v_f_f64m8(0.0, __riscv_vsetvl_e64m8(ne00));
+                vfloat32m8_t sum_vec = __riscv_vfmv_v_f_f32m8(0.0, vl);
 
                 int64_t i00 = 0;
                 for (; i00 <= ne00 - (int64_t)vl; i00 += (int64_t)vl) {
                     vl = __riscv_vsetvl_e32m4(ne00 - i00);
                     
                     // 加载fp32数据
-                    vfloat32m4_t x_vec_f32 = __riscv_vle32_v_f32m4(&x[i00], vl);
+                    vfloat32m8_t x_vec_f32 = __riscv_vle32_v_f32m8(&x[i00], vl);
                     
                     // 将fp32扩展为fp64 - 使用正确的类型转换
-                    vfloat64m8_t x_vec_f64 = __riscv_vfwcvt_f_f_v_f64m8(x_vec_f32, vl);
+                    // vfloat64m8_t x_vec_f64 = __riscv_vfwcvt_f_f_v_f64m8(x_vec_f32, vl);
                     
                     // 在fp64精度下计算平方
-                    vfloat64m8_t square_vec = __riscv_vfmul_vv_f64m8(x_vec_f64, x_vec_f64, vl);
+                    vfloat32m8_t square_vec = __riscv_vfmul_vv_f32m8(x_vec_f32, x_vec_f32, vl);
                     
                     // fp64精度累加
-                    sum_vec = __riscv_vfadd_vv_f64m8(sum_vec, square_vec, vl);
+                    sum_vec = __riscv_vfadd_vv_f32m8(sum_vec, square_vec, vl);
                 }
 
                 // 规约求和（fp64精度）
-                vfloat64m1_t vec_sum = __riscv_vfmv_v_f_f64m1(0.0f, vl);
-                vec_sum = __riscv_vfredusum_vs_f64m8_f64m1(sum_vec, vec_sum, vl);
+                vfloat32m1_t vec_sum = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+                vec_sum = __riscv_vfredusum_vs_f32m8_f32m1(sum_vec, vec_sum, vl);
 
-                double sum = __riscv_vfmv_f_s_f64m1_f64(vec_sum);
+                double sum = __riscv_vfmv_f_s_f32m1_f32(vec_sum);
 
 
                 const float mean = sum/ne00;
@@ -10370,4 +10370,5 @@ void ggml_compute_forward_opt_step_sgd(const ggml_compute_params * params, ggml_
             }
     }
 }
+
 
